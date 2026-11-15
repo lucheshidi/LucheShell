@@ -27,6 +27,7 @@
 // 声明全局变量用于命令历史记录
 std::deque<std::string> command_history;
 size_t history_index = 0;
+bool g_input_eof = false;
 
 // 交互式逐字符读取一行，支持在未回车时按下 Ctrl+L 清屏
 std::string read_line_interactive(const std::string& prompt_shown) {
@@ -43,6 +44,7 @@ std::string read_line_interactive(const std::string& prompt_shown) {
             line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
             return line;
         }
+        g_input_eof = true;
         return "";
     }
 
@@ -60,10 +62,17 @@ std::string read_line_interactive(const std::string& prompt_shown) {
         int ch = _getch();
 
         // 处理 EOF 或错误
-        if (ch == -1 || ch == 26) { // 26 是 Ctrl+Z
-            if (current_buffer.empty()) return "exit";
+        if (ch == -1 || ch == 26 || ch == 4) {
+            if (current_buffer.empty()) {
+                g_input_eof = true;
+                return "";
+            }
             std::cout << "\n";
             break;
+        }
+        if (ch == 3) {
+            std::cout << "^C\n";
+            return "";
         }
 
         // 处理普通回车 (LF)
@@ -117,6 +126,13 @@ std::string read_line_interactive(const std::string& prompt_shown) {
                     std::cout.flush();
                 }
                 continue;
+            }
+            else if (ch2 == 71) { cursor_pos = 0; std::cout << "\r" << prompt_shown; }
+            else if (ch2 == 79) { cursor_pos = current_buffer.size(); std::cout << "\r" << prompt_shown << current_buffer; }
+            else if (ch2 == 83 && cursor_pos < current_buffer.size()) {
+                current_buffer.erase(cursor_pos, 1);
+                std::cout << "\r" << prompt_shown << current_buffer << "\033[K";
+                for (size_t i = cursor_pos; i < current_buffer.size(); ++i) std::cout << '\b';
             }
         }
 
@@ -176,6 +192,7 @@ std::string read_line_interactive(const std::string& prompt_shown) {
         if (std::getline(std::cin, line)) {
             return line;
         }
+        g_input_eof = true;
         return "";
     }
 
@@ -183,8 +200,10 @@ std::string read_line_interactive(const std::string& prompt_shown) {
     termios newt{};
     tcgetattr(STDIN_FILENO, &oldt);
     newt = oldt;
-    newt.c_lflag &= ~(ICANON); // 保留 ECHO 由我们自己输出
+    newt.c_lflag &= ~(ICANON | ISIG); // 输入由 shell 处理，保留 ECHO 由我们自己输出
     newt.c_lflag &= ~(ECHO);
+    newt.c_cc[VMIN] = 1;
+    newt.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &newt);
 
     // 初始打印 prompt
@@ -195,7 +214,20 @@ std::string read_line_interactive(const std::string& prompt_shown) {
         unsigned char ch = 0;
         ssize_t n = ::read(STDIN_FILENO, &ch, 1);
         if (n <= 0) {
-            continue;
+            tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+            g_input_eof = true;
+            return "";
+        }
+
+        if (ch == 3) {
+            std::cout << "^C\n";
+            tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+            return "";
+        }
+        if (ch == 4 && current_buffer.empty()) {
+            tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+            g_input_eof = true;
+            return "";
         }
 
         // ANSI 转义序列处理 (方向键)
@@ -206,6 +238,23 @@ std::string read_line_interactive(const std::string& prompt_shown) {
                 unsigned char ch3 = 0;
                 n = ::read(STDIN_FILENO, &ch3, 1);
                 if (n > 0) {
+                    if (ch3 == '3') {
+                        unsigned char tail = 0;
+                        if (::read(STDIN_FILENO, &tail, 1) > 0 && tail == '~' && cursor_pos < current_buffer.size()) {
+                            current_buffer.erase(cursor_pos, 1);
+                            std::cout << "\r" << prompt_shown << current_buffer << "\033[K";
+                            for (size_t i = cursor_pos; i < current_buffer.size(); ++i) std::cout << '\b';
+                            std::cout.flush();
+                        }
+                        continue;
+                    }
+                    if (ch3 == 'H' || ch3 == 'F') {
+                        cursor_pos = ch3 == 'H' ? 0 : current_buffer.size();
+                        std::cout << "\r" << prompt_shown << current_buffer;
+                        for (size_t i = cursor_pos; i < current_buffer.size(); ++i) std::cout << '\b';
+                        std::cout.flush();
+                        continue;
+                    }
                     if (ch3 == 'A') { // 上箭头
                         if (!command_history.empty() && history_index > 0) {
                             history_index--;

@@ -6,6 +6,7 @@
 
 extern std::deque<std::string> command_history;
 extern size_t history_index;
+extern bool g_input_eof;
 
 std::string read_line_interactive(const std::string& prompt_shown);
 

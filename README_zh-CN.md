@@ -55,6 +55,14 @@ cmake --build build
 - `cls` / `clear`: 清屏。
 - `plugin`: 进入插件管理模式。
 
+### Profile 与脚本
+- 启动时读取 `~/duckshell/profile.dsh`；设置 `DUCKSHELL_PROFILE` 可指定其他文件，传入 `--norc` 可跳过加载。
+- 使用 `DuckShell file.dsh [arguments...]` 运行脚本。当前支持基础 POSIX 风格条件、循环和函数，以及 VBScript 风格的 `If`、`For`、`Do`、`Function`、`Sub` 代码块。
+- `echo` 默认解析常见转义（包括 `\n`、`\r`、`\t`、`\e` 和八进制 ANSI 转义）；`-n` 不输出结尾换行，`-E` 禁止解析。
+
+### 后续可实现
+管道与重定向、命令替换、通配符展开、作业控制、`case`/`select`、数组，以及更完整的 POSIX/VBScript 表达式和错误语义，都是自然的后续扩展方向。
+
 ## 🔌 插件系统
 
 DuckShell 的精髓在于插件。

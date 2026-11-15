@@ -7,13 +7,19 @@
 #include <sstream>
 #include <regex>
 #include <cstring>
+#include <cerrno>
 
 #include "../header.h"
 #include "../plugins/plugin_manager.h"
+#include "shell_commands.h"
+#include "shell_script.h"
 
 #ifndef _WIN32
+#include <fcntl.h>
 #include <dirent.h>
+#include <signal.h>
 #include <sys/stat.h>
+#include <termios.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -38,16 +44,37 @@ int execute_external_command(const std::vector<std::string>& args) {
     if (args.empty()) return 0;
 
 #ifdef _WIN32
-    // Windows 实现: 使用 CreateProcess
+    auto quote_argument = [](const std::string& value) {
+        if (!value.empty() && value.find_first_of(" \t\n\v\"") == std::string::npos) return value;
+        std::string quoted = "\"";
+        size_t backslashes = 0;
+        for (char ch : value) {
+            if (ch == '\\') ++backslashes;
+            else if (ch == '"') {
+                quoted.append(backslashes * 2 + 1, '\\');
+                quoted.push_back(ch);
+                backslashes = 0;
+            } else {
+                quoted.append(backslashes, '\\');
+                backslashes = 0;
+                quoted.push_back(ch);
+            }
+        }
+        quoted.append(backslashes * 2, '\\');
+        quoted.push_back('"');
+        return quoted;
+    };
     std::string command_line;
     for (size_t i = 0; i < args.size(); ++i) {
-        std::string arg = args[i];
-        // 如果参数包含空格且没被引号包裹，则包裹它
-        if (arg.find(' ') != std::string::npos && arg.front() != '\"') {
-            arg.insert(0, "\"");
-            arg.append("\"");
-        }
-        command_line += arg + (i == args.size() - 1 ? "" : " ");
+        if (i) command_line.push_back(' ');
+        command_line += quote_argument(args[i]);
+    }
+
+    HANDLE console_handles[] = {GetStdHandle(STD_INPUT_HANDLE), GetStdHandle(STD_OUTPUT_HANDLE), GetStdHandle(STD_ERROR_HANDLE)};
+    DWORD console_modes[3]{};
+    bool has_console_mode[3]{};
+    for (size_t i = 0; i < 3; ++i) {
+        has_console_mode[i] = console_handles[i] != INVALID_HANDLE_VALUE && GetConsoleMode(console_handles[i], &console_modes[i]);
     }
 
     STARTUPINFOA si;
@@ -72,13 +99,26 @@ int execute_external_command(const std::vector<std::string>& args) {
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    for (size_t i = 0; i < 3; ++i) {
+        if (has_console_mode[i]) SetConsoleMode(console_handles[i], console_modes[i]);
+    }
 
     return static_cast<int>(exit_code);
 #else
-    // Unix 实现: 使用 fork + execvp
+    int exec_error_pipe[2];
+    if (pipe(exec_error_pipe) != 0) return -1;
+    fcntl(exec_error_pipe[1], F_SETFD, FD_CLOEXEC);
+    const pid_t shell_group = getpgrp();
+    const bool has_terminal = isatty(STDIN_FILENO) != 0;
     pid_t pid = fork();
     if (pid == 0) {
-        // 子进程
+        close(exec_error_pipe[0]);
+        setpgid(0, 0);
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTTOU, SIG_DFL);
         std::vector<char*> c_args;
         for (const auto& arg : args) {
             c_args.push_back(const_cast<char*>(arg.c_str()));
@@ -86,19 +126,33 @@ int execute_external_command(const std::vector<std::string>& args) {
         c_args.push_back(nullptr);
 
         execvp(c_args[0], c_args.data());
-        // 如果 execvp 返回，说明执行失败
-        std::cerr << "DuckShell: failed to execute " << c_args[0] << ": " << strerror(errno) << std::endl;
-        exit(127);
+        const int error = errno;
+        (void)write(exec_error_pipe[1], &error, sizeof(error));
+        _exit(127);
     } else if (pid > 0) {
-        // 父进程
-        int status;
-        waitpid(pid, &status, 0);
+        close(exec_error_pipe[1]);
+        setpgid(pid, pid);
+        if (has_terminal) tcsetpgrp(STDIN_FILENO, pid);
+        int status = 0;
+        pid_t waited;
+        do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
+        if (has_terminal) tcsetpgrp(STDIN_FILENO, shell_group);
+        if (waited < 0) {
+            close(exec_error_pipe[0]);
+            return -1;
+        }
+        int exec_error = 0;
+        const ssize_t error_size = read(exec_error_pipe[0], &exec_error, sizeof(exec_error));
+        close(exec_error_pipe[0]);
+        if (error_size == sizeof(exec_error)) return -1;
         if (WIFEXITED(status)) {
             return WEXITSTATUS(status);
         }
-        return -1;
+        if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+        return 1;
     } else {
-        // fork 失败
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
         return -1;
     }
 #endif
@@ -143,7 +197,13 @@ std::string transform_string(std::string text) {
                 old_str = clean(old_str);
                 new_str = clean(new_str);
                 
-                std::string base_val = shell_global_vars.count(var_name) ? shell_global_vars[var_name] : "";
+                std::string base_val;
+                if (shell_global_vars.count(var_name)) {
+                    base_val = shell_global_vars[var_name];
+                } else {
+                    char* env_val = getenv(var_name.c_str());
+                    base_val = env_val ? std::string(env_val) : "";
+                }
                 
                 // 执行替换
                 if (!old_str.empty()) {
@@ -157,7 +217,12 @@ std::string transform_string(std::string text) {
             }
         } else {
             // 普通变量替换
-            replacement = shell_global_vars.count(expression) ? shell_global_vars[expression] : "";
+            if (shell_global_vars.count(expression)) {
+                replacement = shell_global_vars[expression];
+            } else {
+                char* env_val = getenv(expression.c_str());
+                replacement = env_val ? std::string(env_val) : "";
+            }
         }
 
         result.replace(match.position(0), match.length(0), replacement);
@@ -166,23 +231,8 @@ std::string transform_string(std::string text) {
     return result;
 }
 
-int execute_command(const std::string& input) {
-    // 移除首尾空白符及不可见的 \r 等
-    std::string trimmed = input;
-    size_t start = trimmed.find_first_not_of(" \t\n\r");
-    if (start == std::string::npos) return 0;
-    size_t end = trimmed.find_last_not_of(" \t\n\r");
-    trimmed = trimmed.substr(start, end - start + 1);
-
-    // 应用全局变量替换和字符串转换逻辑 (如 .replace())
-    std::string transformed = transform_string(trimmed);
-    
-    if (const std::vector<std::string> cmd_inner = split(transformed, ' '); cmd_inner.empty()) return 1;
-    const std::vector<std::string> cmd = split(transformed, ' ');
-
-    // 恢复用户要求的 Executing 消息
-    println("Executing: " << transformed);
-    std::cout.flush(); // 立即刷新，确保在命令执行前显示
+int run_builtin_command(const std::vector<std::string>& cmd) {
+    if (cmd.empty()) return 0;
 
     if (cmd[0] == "cls" || cmd[0] == "clear") {
 #ifdef _WIN32
@@ -204,9 +254,14 @@ int execute_command(const std::string& input) {
 #ifdef _WIN32
             char* env = getenv("USERPROFILE");
             dir_now = env ? std::string(env) : "C:\\"; 
+            SetCurrentDirectoryA(dir_now.c_str());
 #else
             char* env = getenv("HOME");
             dir_now = env ? std::string(env) : "/";
+            if (chdir(dir_now.c_str()) != 0) {
+                println(RED << BOLD << "Unable to change directory." << RESET);
+                return 1;
+            }
 #endif
             return 0;
         }
@@ -378,8 +433,13 @@ int execute_command(const std::string& input) {
                     cased[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(cased[0])));
                 }
                 dir_now = cased;
+                SetCurrentDirectoryA(dir_now.c_str());
 #else
                 dir_now = new_path;
+                if (chdir(dir_now.c_str()) != 0) {
+                    println(RED << BOLD << "Unable to change directory." << RESET);
+                    return 1;
+                }
 #endif
             }
             else {
@@ -733,41 +793,89 @@ int execute_command(const std::string& input) {
 
     // 经典echo命令
     else if (cmd[0] == "echo" || cmd[0] == "print") {
-        if (cmd.size() < 2) {
-            println("");
+        bool newline = true;
+        bool interpret_escapes = true;
+        size_t first = 1;
+        while (first < cmd.size() && cmd[first].size() == 2 && cmd[first][0] == '-') {
+            if (cmd[first] == "-n") newline = false;
+            else if (cmd[first] == "-e") interpret_escapes = true;
+            else if (cmd[first] == "-E") interpret_escapes = false;
+            else break;
+            ++first;
         }
-        else {
-            // 由于现在 transformed 已经包含了所有的变量替换和 replace 逻辑，
-            // 且 cmd 是基于 transformed 分割的，我们可以直接组合 cmd[1...]
-            std::string content;
-            for (size_t i = 1; i < cmd.size(); ++i) {
-                content += cmd[i] + (i == cmd.size() - 1 ? "" : " ");
+        auto decode = [](const std::string& value) {
+            std::string result;
+            for (size_t i = 0; i < value.size(); ++i) {
+                if (value[i] != '\\' || i + 1 >= value.size()) {
+                    result.push_back(value[i]);
+                    continue;
+                }
+                const char next = value[++i];
+                if (next >= '0' && next <= '7') {
+                    int code = next - '0';
+                    int digits = 1;
+                    while (digits < 3 && i + 1 < value.size() && value[i + 1] >= '0' && value[i + 1] <= '7') {
+                        code = code * 8 + (value[++i] - '0');
+                        ++digits;
+                    }
+                    result.push_back(static_cast<char>(code));
+                    continue;
+                }
+                switch (next) {
+                    case 'n': result.push_back('\n'); break;
+                    case 'r': result.push_back('\r'); break;
+                    case 't': result.push_back('\t'); break;
+                    case 'a': result.push_back('\a'); break;
+                    case 'b': result.push_back('\b'); break;
+                    case 'f': result.push_back('\f'); break;
+                    case 'v': result.push_back('\v'); break;
+                    case 'e': result.push_back('\033'); break;
+                    case '\\': result.push_back('\\'); break;
+                    default: result.push_back('\\'); result.push_back(next); break;
+                }
             }
-            
-            // 移除最外层的引号（如果有）
-            if (content.length() >= 2 && 
-               ((content.front() == '\"' && content.back() == '\"') || 
-                (content.front() == '\'' && content.back() == '\''))) {
-                content = content.substr(1, content.length() - 2);
-            }
-            
-            println(content);
+            return result;
+        };
+        for (size_t i = first; i < cmd.size(); ++i) {
+            if (i > first) std::cout << ' ';
+            std::cout << (interpret_escapes ? decode(cmd[i]) : cmd[i]);
         }
+        if (newline) std::cout << '\n';
     }
 
     // set命令，用于设置变量
-    else if (cmd[0] == "set" || cmd[0] == "var") {
-        if (cmd.size() < 2) {
-            println(RED << BOLD << "Missing arguments. Usage: set key=value" << RESET);
+    else if (cmd[0] == "set" || cmd[0] == "var" || cmd[0] == "export") {
+        if (cmd.size() == 1) {
+            for (const auto& variable : shell_global_vars) std::cout << variable.first << "=" << variable.second << '\n';
         }
         else {
-            size_t pos = cmd[1].find('=');
+            size_t value_start = 2;
+            std::string assignment = cmd[1];
+            if (cmd.size() >= 4 && cmd[2] == "=") {
+                assignment += "=";
+                value_start = 3;
+            }
+            size_t pos = assignment.find('=');
             if (pos != std::string::npos) {
-                std::string key = cmd[1].substr(0, pos);
-                std::string value = cmd[1].substr(pos + 1);
+                std::string key = assignment.substr(0, pos);
+                std::string value = assignment.substr(pos + 1);
+                for (size_t i = value_start; i < cmd.size(); ++i) {
+                    if (i > value_start) value += " ";
+                    value += cmd[i];
+                }
                 shell_global_vars[key] = value;
+
+                // 同步到系统环境变量
+#ifdef _WIN32
+                std::string env_str = key + "=" + value;
+                _putenv(env_str.c_str());
+#else
+                setenv(key.c_str(), value.c_str(), 1);
+#endif
                 // println(GREEN << "Variable set: " << key << " = " << value << RESET);
             } else {
+                // 如果没有等号，可能是 export key，此时列出变量或从系统环境导入？
+                // 这里暂且只处理 key=value
                 println(RED << BOLD << "Invalid format. Usage: set key=value" << RESET);
             }
         }
@@ -798,7 +906,7 @@ int execute_command(const std::string& input) {
             // 如果返回 -1，说明进程创建失败（找不到文件等）
             // 如果返回 1 (Windows) 或 127 (Unix)，通常也表示命令未找到
 #ifdef _WIN32
-            if (result == -1 || result == 1) {
+            if (result == -1) {
                 println(RED << BOLD << "DuckShell: COMMAND NOT FOUND! Please specify another command." << RESET);
             }
 #else
@@ -806,8 +914,20 @@ int execute_command(const std::string& input) {
                 println(RED << BOLD << "DuckShell: COMMAND NOT FOUND! Please specify another command." << RESET);
             }
 #endif
-            return 127;
+            return result < 0 ? 127 : result;
         }
+        return result;
     }
     return 0;
+}
+
+int execute_command(const std::string& input) {
+    const std::string trimmed = input;
+    if (trimmed.find_first_not_of(" \t\r\n") == std::string::npos) return 0;
+    const char* show = std::getenv("DUCKSHELL_SHOW_EXEC");
+    if (!show || std::string(show) != "0") {
+        println("Executing: " << trimmed);
+        std::cout.flush();
+    }
+    return run_script_text(trimmed);
 }

@@ -1,6 +1,15 @@
 #include "header.h"
 #include "plugins/plugin_manager.h"
+#include "shell/shell_script.h"
 #include "version.h"
+
+#include <filesystem>
+
+namespace {
+std::string join_path(const std::string& base, const std::string& name) {
+    return (std::filesystem::path(base) / name).string();
+}
+}
 
 int main(int argc, char **argv) {
 #ifdef _WIN32
@@ -11,6 +20,14 @@ int main(int argc, char **argv) {
         if (GetConsoleMode(hOut, &dwMode)) {
             dwMode |= 0x0004; // ENABLE_VIRTUAL_TERMINAL_PROCESSING
             SetConsoleMode(hOut, dwMode);
+        }
+    }
+    HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+    if (hErr != INVALID_HANDLE_VALUE) {
+        DWORD dwMode = 0;
+        if (GetConsoleMode(hErr, &dwMode)) {
+            dwMode |= 0x0004;
+            SetConsoleMode(hErr, dwMode);
         }
     }
 #endif
@@ -80,15 +97,36 @@ int main(int argc, char **argv) {
     PluginManager::installAllPlugins(); // 扫描并安装所有插件
     PluginManager::buildCommandMap();   // 构建命令映射表
 
-    if (argc < 2) {
-        startup();
+    bool no_profile = false;
+    std::vector<std::string> arguments;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--norc") no_profile = true;
+        else arguments.emplace_back(argv[i]);
+    }
+
+    const char* profile_override = std::getenv("DUCKSHELL_PROFILE");
+    const std::string default_profile = join_path(join_path(home_dir, "duckshell"), "profile.dsh");
+    const std::string profile = profile_override && *profile_override ? profile_override : default_profile;
+    if (!no_profile && (!profile_override || !*profile_override) && !std::filesystem::exists(profile)) {
+        std::ofstream profile_template(profile);
+        profile_template << "# DuckShell startup profile\n"
+                         << "# Uncomment and customize your prompt, for example:\n"
+                         << "# set PROMPT = \"\\e[36mDUCKSHELL { \\w } > \\e[0m\"\n";
+    }
+    if (!no_profile && std::filesystem::exists(profile)) run_script_file(profile);
+
+    if (!arguments.empty() && std::filesystem::is_regular_file(arguments.front())) {
+        std::vector<std::string> script_arguments(arguments.begin() + 1, arguments.end());
+        return run_script_file(arguments.front(), script_arguments);
+    }
+    if (arguments.empty()) {
+        return startup();
     } else {
         std::string full_cmd;
-        for (int i = 1; i < argc; ++i) {
-            full_cmd += argv[i];
-            if (i < argc - 1) full_cmd += " ";
+        for (size_t i = 0; i < arguments.size(); ++i) {
+            full_cmd += arguments[i];
+            if (i + 1 < arguments.size()) full_cmd += " ";
         }
-        startup(full_cmd);
+        return startup(full_cmd);
     }
-    return 0;
 }

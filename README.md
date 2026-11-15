@@ -58,6 +58,14 @@ cmake --build build
 - `cls` / `clear`: Clear the screen.
 - `plugin`: Enter plugin management mode.
 
+### Profiles and scripts
+- Startup commands are loaded from `~/duckshell/profile.dsh`; set `DUCKSHELL_PROFILE` to use another file or pass `--norc` to skip it.
+- Run a script with `DuckShell file.dsh [arguments...]`. Scripts support basic POSIX-style conditionals, loops and functions, plus VBScript-style `If`, `For`, `Do`, `Function` and `Sub` blocks.
+- `echo` decodes common escapes (including `\n`, `\r`, `\t`, `\e`, and octal ANSI escapes); `-n` omits the final newline and `-E` disables decoding.
+
+### Possible next steps
+Pipelines and redirections, command substitution, globbing, job control, `case`/`select`, arrays, and more complete POSIX/VBScript expression and error semantics are natural extensions.
+
 ## 🔌 Plugin System
 
 The essence of DuckShell lies in its plugins.

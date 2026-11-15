@@ -61,6 +61,8 @@ add_executable(DuckShell
         src/shell/shell_main.cpp
         src/shell/shell_commands.cpp
         src/shell/shell_commands.h
+        src/shell/shell_script.cpp
+        src/shell/shell_script.h
         src/shell/shell_input.cpp
         src/shell/shell_input.h
         src/plugins/plugin_manager.cpp
