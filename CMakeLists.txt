@@ -30,12 +30,16 @@ if(ENABLE_REMOTE_REPO)
         set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
         set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
 
-        if(WIN32 AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        if(WIN32 AND CMAKE_CROSSCOMPILING)
+            # Windows 交叉编译: 使用 SChannel (无需外部 SSL 库)
+            set(CMAKE_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+            set(CMAKE_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+        elseif(WIN32 AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             # Windows MSVC/MinGW: 使用 SChannel
             set(CMAKE_USE_SCHANNEL ON CACHE BOOL "" FORCE)
             set(CMAKE_USE_OPENSSL OFF CACHE BOOL "" FORCE)
         elseif(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-            # Windows MSYS2 CLANG64: 使用 OpenSSL
+            # Windows MSYS2 CLANG64 原生编译: 使用 OpenSSL
             set(CMAKE_USE_SCHANNEL OFF CACHE BOOL "" FORCE)
             set(CMAKE_USE_OPENSSL ON CACHE BOOL "" FORCE)
         else()

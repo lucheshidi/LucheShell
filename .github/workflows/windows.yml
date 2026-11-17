@@ -23,9 +23,9 @@ jobs:
             extra_cmake_args: "-G Ninja"
             shell: msys2 {0}
           - architecture: aarch64
-            msystem: CLANGARM64
-            # 使用 CLANGARM64 环境和 clang 编译器进行 ARM64 构建
-            extra_cmake_args: "-G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++"
+            msystem: CLANG64
+            # 使用 CLANG64 环境和工具链文件交叉编译 ARM64
+            extra_cmake_args: "-G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/windows-arm64-toolchain.cmake"
             shell: msys2 {0}
 
     defaults:
@@ -50,7 +50,7 @@ jobs:
             mingw-w64-x86_64-ninja
           cache: true
 
-      # --- ARM64 (CLANGARM64) 环境配置 ---
+      # --- ARM64 (CLANG64 交叉编译) 环境配置 ---
       - name: Install Toolchain for ARM64
         if: matrix.architecture == 'aarch64'
         uses: msys2/setup-msys2@v2
@@ -58,15 +58,13 @@ jobs:
           msystem: ${{ matrix.msystem }}
           update: true
           install: >-
-            mingw-w64-clang-aarch64-clang
-            mingw-w64-clang-aarch64-cmake
-            mingw-w64-clang-aarch64-ninja
-            mingw-w64-clang-aarch64-openssl
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
           pacboy: >-
             clang:p
             cmake:p
             ninja:p
-            openssl:p
           cache: true
 
       # --- 通用构建流程 ---
