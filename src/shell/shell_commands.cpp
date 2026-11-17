@@ -13,6 +13,7 @@
 #include "../plugins/plugin_manager.h"
 #include "shell_commands.h"
 #include "shell_script.h"
+#include "color_codes.h"
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -39,9 +40,89 @@ std::vector<std::string> split(const std::string& str, char delimiter) {
     return tokens;
 }
 
+std::string decode_echo_escapes(const std::string& value) {
+    auto hex_value = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') return ch - '0';
+        if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+        if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+        return -1;
+    };
+    auto append_utf8 = [](std::string& output, unsigned int codepoint) {
+        if (codepoint <= 0x7F) output.push_back(static_cast<char>(codepoint));
+        else if (codepoint <= 0x7FF) {
+            output.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+            output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else if (codepoint <= 0xFFFF && !(codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+            output.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+            output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else if (codepoint <= 0x10FFFF) {
+            output.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+            output.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+            output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        }
+    };
+
+    std::string result;
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] != '\\' || i + 1 >= value.size()) {
+            result.push_back(value[i]);
+            continue;
+        }
+        const char next = value[++i];
+        if (next == 'x' || next == 'u' || next == 'U') {
+            const size_t digits = next == 'x' ? 2 : next == 'u' ? 4 : 8;
+            unsigned int codepoint = 0;
+            bool valid = i + digits < value.size();
+            for (size_t digit = 0; valid && digit < digits; ++digit) {
+                const int number = hex_value(value[i + 1 + digit]);
+                if (number < 0) valid = false;
+                else codepoint = (codepoint << 4) | static_cast<unsigned int>(number);
+            }
+            if (valid && (next == 'x' || (codepoint <= 0x10FFFF && !(codepoint >= 0xD800 && codepoint <= 0xDFFF)))) {
+                if (next == 'x') result.push_back(static_cast<char>(codepoint));
+                else append_utf8(result, codepoint);
+                i += digits;
+                continue;
+            }
+            result.push_back('\\');
+            result.push_back(next);
+            continue;
+        }
+        if (next >= '0' && next <= '7') {
+            int code = next - '0';
+            int digits = 1;
+            while (digits < 3 && i + 1 < value.size() && value[i + 1] >= '0' && value[i + 1] <= '7') {
+                code = code * 8 + (value[++i] - '0');
+                ++digits;
+            }
+            result.push_back(static_cast<char>(code));
+            continue;
+        }
+        switch (next) {
+            case 'n': result.push_back('\n'); break;
+            case 'r': result.push_back('\r'); break;
+            case 't': result.push_back('\t'); break;
+            case 'a': result.push_back('\a'); break;
+            case 'b': result.push_back('\b'); break;
+            case 'f': result.push_back('\f'); break;
+            case 'v': result.push_back('\v'); break;
+            case 'e': result.push_back('\033'); break;
+            case '\\': result.push_back('\\'); break;
+            default: result.push_back('\\'); result.push_back(next); break;
+        }
+    }
+    return result;
+}
+
 // 跨平台执行外部程序
 int execute_external_command(const std::vector<std::string>& args) {
     if (args.empty()) return 0;
+    std::vector<std::string> command_args = args;
+    for (size_t i = 1; i < command_args.size(); ++i) {
+        command_args[i] = translate_external_argument(command_args[i]);
+    }
 
 #ifdef _WIN32
     auto quote_argument = [](const std::string& value) {
@@ -65,9 +146,9 @@ int execute_external_command(const std::vector<std::string>& args) {
         return quoted;
     };
     std::string command_line;
-    for (size_t i = 0; i < args.size(); ++i) {
+    for (size_t i = 0; i < command_args.size(); ++i) {
         if (i) command_line.push_back(' ');
-        command_line += quote_argument(args[i]);
+        command_line += quote_argument(command_args[i]);
     }
 
     HANDLE console_handles[] = {GetStdHandle(STD_INPUT_HANDLE), GetStdHandle(STD_OUTPUT_HANDLE), GetStdHandle(STD_ERROR_HANDLE)};
@@ -120,7 +201,7 @@ int execute_external_command(const std::vector<std::string>& args) {
         signal(SIGTTIN, SIG_DFL);
         signal(SIGTTOU, SIG_DFL);
         std::vector<char*> c_args;
-        for (const auto& arg : args) {
+        for (const auto& arg : command_args) {
             c_args.push_back(const_cast<char*>(arg.c_str()));
         }
         c_args.push_back(nullptr);
@@ -457,7 +538,7 @@ int run_builtin_command(const std::vector<std::string>& cmd) {
             if (hFind != INVALID_HANDLE_VALUE) {
                 do {
                     std::string name(findData.cFileName);
-                    std::string type = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? "<DIR>   " : "<FILE>  ";
+                    std::string type = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? "\033[0;92m<DIR>\033[0m   " : "\033[0;33m<FILE>\033[0m  ";
                     std::cout << std::left << std::setw(6) << type
                              << " " << name << std::endl;
                 }
@@ -479,7 +560,7 @@ int run_builtin_command(const std::vector<std::string>& cmd) {
                     struct stat statbuf;
                     std::string fullPath = dir_now + "/" + name;
                     if (stat(fullPath.c_str(), &statbuf) == 0) {
-                        std::string type = S_ISDIR(statbuf.st_mode) ? "<DIR>   " : "<FILE>  ";
+                        std::string type = S_ISDIR(statbuf.st_mode) ? "\033[0;92m<DIR>\033[0m   " : "\033[0;33m<FILE>\033[0m  ";
                         std::cout << std::left << std::setw(6) << type
                                  << " " << name << std::endl;
                     }
@@ -803,44 +884,13 @@ int run_builtin_command(const std::vector<std::string>& cmd) {
             else break;
             ++first;
         }
-        auto decode = [](const std::string& value) {
-            std::string result;
-            for (size_t i = 0; i < value.size(); ++i) {
-                if (value[i] != '\\' || i + 1 >= value.size()) {
-                    result.push_back(value[i]);
-                    continue;
-                }
-                const char next = value[++i];
-                if (next >= '0' && next <= '7') {
-                    int code = next - '0';
-                    int digits = 1;
-                    while (digits < 3 && i + 1 < value.size() && value[i + 1] >= '0' && value[i + 1] <= '7') {
-                        code = code * 8 + (value[++i] - '0');
-                        ++digits;
-                    }
-                    result.push_back(static_cast<char>(code));
-                    continue;
-                }
-                switch (next) {
-                    case 'n': result.push_back('\n'); break;
-                    case 'r': result.push_back('\r'); break;
-                    case 't': result.push_back('\t'); break;
-                    case 'a': result.push_back('\a'); break;
-                    case 'b': result.push_back('\b'); break;
-                    case 'f': result.push_back('\f'); break;
-                    case 'v': result.push_back('\v'); break;
-                    case 'e': result.push_back('\033'); break;
-                    case '\\': result.push_back('\\'); break;
-                    default: result.push_back('\\'); result.push_back(next); break;
-                }
-            }
-            return result;
-        };
+        std::string output;
         for (size_t i = first; i < cmd.size(); ++i) {
-            if (i > first) std::cout << ' ';
-            std::cout << (interpret_escapes ? decode(cmd[i]) : cmd[i]);
+            if (i > first) output.push_back(' ');
+            output += interpret_escapes ? decode_echo_escapes(cmd[i]) : cmd[i];
         }
-        if (newline) std::cout << '\n';
+        if (newline) output.push_back('\n');
+        std::cout << translate_color_codes(output);
     }
 
     // set命令，用于设置变量

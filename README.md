@@ -60,8 +60,12 @@ cmake --build build
 
 ### Profiles and scripts
 - Startup commands are loaded from `~/duckshell/profile.dsh`; set `DUCKSHELL_PROFILE` to use another file or pass `--norc` to skip it.
+- Like PowerShell, the `PROFILE` variable holds the profile path, e.g. `notepad.exe ${PROFILE}`; variable expansion remains a single argument, so quotes aren't needed for paths with spaces.
+- Built-in command `reload` resets all variables, functions and aliases then reloads the profile; `reload --profile-only` reloads only the profile while keeping core variables (PROFILE, HOME, PATH, PROMPT, etc.).
 - Run a script with `DuckShell file.dsh [arguments...]`. Scripts support basic POSIX-style conditionals, loops and functions, plus VBScript-style `If`, `For`, `Do`, `Function` and `Sub` blocks.
-- `echo` decodes common escapes (including `\n`, `\r`, `\t`, `\e`, and octal ANSI escapes); `-n` omits the final newline and `-E` disables decoding.
+- Minecraft color codes work directly in profiles and commands: `§a`, `&c`, `{gold}`, `{bold}`, `{#ff8800}`, `&#ff8800`, and `§x§f§f§8§8§0§0`; no `\u` escape is needed for `§`. Conversion is enabled by default; set `DUCKSHELL_COLOR_CODES=0` to disable it globally or `DUCKSHELL_EXTERNAL_COLOR_CODES=0` to disable conversion only for external-command arguments.
+- Set `DUCKSHELL_VERSION_COLOR` in your profile to customize the startup version text color, e.g. `set DUCKSHELL_VERSION_COLOR = "§a"` for green.
+- `echo` decodes common escapes (including `\n`, `\r`, `\t`, `\e`, `\xHH`, `\uHHHH`, `\UHHHHHHHH`, and octal escapes); `-n` omits the final newline and `-E` disables backslash decoding but not color-code conversion.
 
 ### Possible next steps
 Pipelines and redirections, command substitution, globbing, job control, `case`/`select`, arrays, and more complete POSIX/VBScript expression and error semantics are natural extensions.

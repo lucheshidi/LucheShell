@@ -15,7 +15,7 @@ public:
     static void disable_plugin(const std::string& plugin_name);
     static void list_available_plugins();
     static void list_installed_plugins();
-    static void install_all_plugins();
+    static void install_all_plugins(bool quiet_when_unchanged = false);
 
 private:
     static void update_plugins_list_file();

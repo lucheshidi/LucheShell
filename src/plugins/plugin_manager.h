@@ -31,7 +31,7 @@ public:
     static void disablePlugin(const std::string& pluginName) { PluginInstaller::disable_plugin(pluginName); }
     static void listAvailablePlugins() { PluginInstaller::list_available_plugins(); }
     static void listInstalledPlugins() { PluginInstaller::list_installed_plugins(); }
-    static void installAllPlugins() { PluginInstaller::install_all_plugins(); }
+    static void installAllPlugins(bool quiet_when_unchanged = false) { PluginInstaller::install_all_plugins(quiet_when_unchanged); }
 
     // 插件仓库功能
     static void setRepositoryUrl(const std::string& url) { PluginRepository::set_repository_url(url); }

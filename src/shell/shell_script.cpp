@@ -18,6 +18,24 @@
 #include "../header.h"
 #include "shell_commands.h"
 #include "shell_input.h"
+#include "color_codes.h"
+#include "../version.h"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
+void print_version() {
+    std::string version_text = "DuckShell " + std::string(DUCKSHELL_VERSION);
+    auto color_it = shell_global_vars.find("DUCKSHELL_VERSION_COLOR");
+    if (color_it != shell_global_vars.end() && !color_it->second.empty()) {
+        version_text = color_it->second + version_text + "\033[0m";
+    }
+    std::cout << translate_color_codes(version_text) << std::endl;
+}
 
 namespace {
 struct Function {
@@ -94,12 +112,53 @@ std::string get_variable(const std::string& name) {
 }
 
 void decode_escapes(const std::string& input, std::string& output) {
+    auto hex_value = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') return ch - '0';
+        if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+        if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+        return -1;
+    };
+    auto append_utf8 = [](std::string& target, unsigned int codepoint) {
+        if (codepoint <= 0x7F) target.push_back(static_cast<char>(codepoint));
+        else if (codepoint <= 0x7FF) {
+            target.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+            target.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else if (codepoint <= 0xFFFF && !(codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+            target.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+            target.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            target.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else if (codepoint <= 0x10FFFF) {
+            target.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+            target.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+            target.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            target.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        }
+    };
     for (size_t i = 0; i < input.size(); ++i) {
         if (input[i] != '\\' || i + 1 >= input.size()) {
             output.push_back(input[i]);
             continue;
         }
         const char ch = input[++i];
+        if (ch == 'x' || ch == 'u' || ch == 'U') {
+            const size_t digits = ch == 'x' ? 2 : ch == 'u' ? 4 : 8;
+            unsigned int codepoint = 0;
+            bool valid = i + digits < input.size();
+            for (size_t digit = 0; valid && digit < digits; ++digit) {
+                const int number = hex_value(input[i + 1 + digit]);
+                if (number < 0) valid = false;
+                else codepoint = (codepoint << 4) | static_cast<unsigned int>(number);
+            }
+            if (valid && (ch == 'x' || (codepoint <= 0x10FFFF && !(codepoint >= 0xD800 && codepoint <= 0xDFFF)))) {
+                if (ch == 'x') output.push_back(static_cast<char>(codepoint));
+                else append_utf8(output, codepoint);
+                i += digits;
+                continue;
+            }
+            output.push_back('\\');
+            output.push_back(ch);
+            continue;
+        }
         if (ch >= '0' && ch <= '7') {
             int code = ch - '0';
             int digits = 1;
@@ -675,14 +734,16 @@ int execute_simple(const std::string& source) {
                 std::string output;
                 decode_escapes(format, output);
                 size_t arg_index = 2;
+                std::string formatted;
                 for (size_t i = 0; i < output.size(); ++i) {
                     if (output[i] == '%' && i + 1 < output.size()) {
                         const char spec = output[++i];
-                        if (spec == '%') std::cout << '%';
-                        else if (arg_index < command.size()) std::cout << command[arg_index++];
-                        else std::cout << '%' << spec;
-                    } else std::cout << output[i];
+                        if (spec == '%') formatted.push_back('%');
+                        else if (arg_index < command.size()) formatted += command[arg_index++];
+                        else { formatted.push_back('%'); formatted.push_back(spec); }
+                    } else formatted.push_back(output[i]);
                 }
+                std::cout << translate_color_codes(formatted);
                 status = 0;
             } else status = 0;
         } else if (name == "read") {
@@ -704,6 +765,48 @@ int execute_simple(const std::string& source) {
             size_t index = 1;
             for (const auto& entry : command_history) std::cout << index++ << "  " << entry << '\n';
             status = 0;
+        } else if (name == "reload") {
+            bool profile_only = false;
+            for (size_t i = 1; i < command.size(); ++i) {
+                if (command[i] == "--profile-only") profile_only = true;
+            }
+            // 先保存 PROFILE 路径
+            const auto profile_it = shell_global_vars.find("PROFILE");
+            const std::string profile_path = (profile_it != shell_global_vars.end()) ? profile_it->second : "";
+            if (profile_path.empty()) {
+                std::cerr << "reload: PROFILE variable not set\n";
+                status = 1;
+            } else if (profile_only) {
+                // 只重新加载 profile，先重置 profile 中可能设置的变量（保留核心变量）
+                std::vector<std::string> to_keep = {"PROFILE", "HOME", "PATH", "PROMPT", "PS1", "PS2"};
+                std::unordered_map<std::string, std::string> kept;
+                for (const std::string& k : to_keep) {
+                    auto it = shell_global_vars.find(k);
+                    if (it != shell_global_vars.end()) kept[k] = it->second;
+                }
+                shell_global_vars.clear();
+                shell_global_vars = kept;
+                // 重新加载 profile
+                status = run_script_file(profile_path, {});
+                // 重新打印版本号
+                print_version();
+            } else {
+                // 完全重置：清空所有变量、函数、别名
+                shell_global_vars.clear();
+                functions.clear();
+                aliases.clear();
+                positional_arguments.clear();
+                last_status = 0;
+                // 恢复核心变量
+                shell_global_vars["HOME"] = home_dir;
+                shell_global_vars["PROFILE"] = profile_path;
+                const char* env_path = std::getenv("PATH");
+                if (env_path) shell_global_vars["PATH"] = env_path;
+                // 重新加载 profile
+                status = run_script_file(profile_path, {});
+                // 重新打印版本号
+                print_version();
+            }
         } else if (name == "eval") {
             std::string code;
             for (size_t i = 1; i < command.size(); ++i) { if (i > 1) code += ' '; code += command[i]; }
@@ -1084,6 +1187,33 @@ int execute_lines(const std::vector<std::string>& lines, size_t& position, const
         } else if (starts_with_ci(line, "exit function") || starts_with_ci(line, "exit sub")) {
             returned = true;
             ++position;
+        } else if (starts_with_ci(line, "set ") || starts_with_ci(line, "var ") || starts_with_ci(line, "export ")) {
+            // Handle set/var/export keyword: strip the keyword and process the rest as assignment
+            const std::string rest = trim(line.substr(line.find_first_of(" \t") + 1));
+            const size_t equals = rest.find('=');
+            if (equals != std::string::npos && rest.find("==", equals) == std::string::npos && rest.find("!=", equals) == std::string::npos && rest.find("<=", equals) == std::string::npos && rest.find(">=", equals) == std::string::npos) {
+                const std::string left = trim(rest.substr(0, equals));
+                const std::string right = trim(rest.substr(equals + 1));
+                if (left.find_first_of(" \t") == std::string::npos && !left.empty()) {
+                    std::string value;
+                    const auto expanded = tokenize(right);
+                    for (size_t i = 0; i < expanded.size(); ++i) {
+                        if (i) value.push_back(' ');
+                        value += expanded[i];
+                    }
+                    if (right.find("$((") == std::string::npos && right.find_first_of("+-*/()") != std::string::npos) {
+                        try { value = ExpressionParser(right).parse().text; } catch (...) {}
+                    }
+                    shell_global_vars[left] = value;
+#ifdef _WIN32
+                    _putenv((left + "=" + value).c_str());
+#else
+                    setenv(left.c_str(), value.c_str(), 1);
+#endif
+                    status = 0;
+                } else status = execute_simple(line);
+            } else status = execute_simple(line);
+            ++position;
         } else {
             const size_t equals = line.find('=');
             if (starts_with_ci(line, "dim ")) {
@@ -1134,14 +1264,43 @@ int run_script_text(const std::string& text, const std::vector<std::string>& arg
 }
 
 int run_script_file(const std::string& path, const std::vector<std::string>& arguments) {
+    std::string contents;
+#ifdef _WIN32
+    // Read file as UTF-8 using Windows API to avoid locale-dependent std::ifstream
+    HANDLE hFile = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        std::cerr << "DuckShell: cannot open script: " << path << '\n';
+        return 127;
+    }
+    DWORD fileSizeHigh = 0;
+    DWORD fileSize = GetFileSize(hFile, &fileSizeHigh);
+    if (fileSize == INVALID_FILE_SIZE) {
+        CloseHandle(hFile);
+        std::cerr << "DuckShell: cannot read script: " << path << '\n';
+        return 127;
+    }
+    std::vector<char> buffer(fileSize);
+    DWORD bytesRead = 0;
+    if (ReadFile(hFile, buffer.data(), fileSize, &bytesRead, nullptr) && bytesRead == fileSize) {
+        // Check for UTF-8 BOM and skip it
+        if (bytesRead >= 3 && buffer[0] == (char)0xEF && buffer[1] == (char)0xBB && buffer[2] == (char)0xBF) {
+            contents.assign(buffer.data() + 3, bytesRead - 3);
+        } else {
+            contents.assign(buffer.data(), bytesRead);
+        }
+    }
+    CloseHandle(hFile);
+#else
     std::ifstream input(path);
     if (!input) {
         std::cerr << "DuckShell: cannot open script: " << path << '\n';
         return 127;
     }
-    std::ostringstream contents;
-    contents << input.rdbuf();
-    return run_script_text(contents.str(), arguments);
+    std::ostringstream oss;
+    oss << input.rdbuf();
+    contents = oss.str();
+#endif
+    return run_script_text(contents, arguments);
 }
 
 bool script_is_incomplete(const std::string& text) {

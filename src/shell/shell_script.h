@@ -9,5 +9,6 @@ int run_script_file(const std::string& path, const std::vector<std::string>& arg
 bool script_is_incomplete(const std::string& text);
 bool shell_should_exit();
 int shell_exit_code();
+void print_version();
 
 #endif

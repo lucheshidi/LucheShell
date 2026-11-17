@@ -159,9 +159,9 @@ void PluginInstaller::list_available_plugins() {
         return;
     }
 
-    println("Available plugins:\n");
+    println("\033[1;33mAvailable plugins:\033[0m\n");
     for (const auto& item : contents) {
-        std::cout << "  " << item << std::endl;
+        std::cout << "  \033[0;33m" << item << "\033[0m" << std::endl;
     }
 }
 
@@ -171,22 +171,33 @@ void PluginInstaller::list_installed_plugins() {
         return;
     }
 
-    println("Installed plugins:\n");
+    println("\033[1;32mInstalled plugins:\033[0m\n");
     for (const auto& pair : PluginLoader::installed_plugins()) {
-        std::cout << "  " << pair.first << ": " << (pair.second ? "enabled" : "disabled") << std::endl;
+        if (pair.second) {
+            std::cout << "  \033[0;32m" << pair.first << "\033[0m: \033[0;32menabled\033[0m" << std::endl;
+        } else {
+            std::cout << "  \033[0;31m" << pair.first << "\033[0m: \033[0;31mdisabled\033[0m" << std::endl;
+        }
     }
 }
 
-void PluginInstaller::install_all_plugins() {
+void PluginInstaller::install_all_plugins(bool quiet_when_unchanged) {
     std::string plugins_dir = home_dir + "/duckshell/plugins";
     std::vector<std::string> contents = PluginLoader::get_directory_contents(plugins_dir);
 
     if (contents.empty()) {
-        println("No plugins found to install.");
+        if (!quiet_when_unchanged) println("No plugins found to install.");
         return;
     }
 
-    println("Scanning for plugins to install...");
+    // 安静模式下先缓存输出，只有发现新插件时才按原样打印
+    std::vector<std::string> pending_messages;
+    auto report = [&](const std::string& message) {
+        if (quiet_when_unchanged) pending_messages.push_back(message);
+        else std::cout << message << std::endl;
+    };
+
+    report("Scanning for plugins to install...");
 
     // 记录初始插件数量
     size_t initial_plugin_count = PluginLoader::installed_plugins().size();
@@ -201,13 +212,16 @@ void PluginInstaller::install_all_plugins() {
             if (it == PluginLoader::installed_plugins().end()) {
                 // 只有未安装的插件才添加
                 PluginLoader::installed_plugins()[item] = true;
-                println("Plugin '" << item.c_str() << "' added for installation.");
+                report("Plugin '" + item + "' added for installation.");
                 has_new_plugins = true;
             } else {
-                println("Plugin '"  << item.c_str() << "' already installed.");
+                report("Plugin '" + item + "' already installed.");
             }
         }
     }
+
+    if (!has_new_plugins && quiet_when_unchanged) return;
+    for (const auto& message : pending_messages) std::cout << message << std::endl;
 
     // 只有在有新插件添加时才重写文件
     if (has_new_plugins) {

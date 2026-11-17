@@ -1,9 +1,11 @@
 #include "header.h"
 #include "plugins/plugin_manager.h"
 #include "shell/shell_script.h"
+#include "shell/color_codes.h"
 #include "version.h"
 
 #include <filesystem>
+#include <exception>
 
 namespace {
 std::string join_path(const std::string& base, const std::string& name) {
@@ -31,11 +33,6 @@ int main(int argc, char **argv) {
         }
     }
 #endif
-
-    println("DuckShell " << DUCKSHELL_VERSION);
-    // 调试信息输出
-    //std::cout << "Home directory: " << home_dir << std::endl;
-    //std::cout << "Current directory: " << dir_now << std::endl;
 
     // 构造duckshell配置目录和插件列表文件路径
     std::string duckshell_dir = home_dir + "/duckshell";
@@ -94,7 +91,7 @@ int main(int argc, char **argv) {
 
     // 初始化插件系统
     PluginManager::loadPlugins();
-    PluginManager::installAllPlugins(); // 扫描并安装所有插件
+    PluginManager::installAllPlugins(true); // 扫描并安装所有插件，没有新插件时不输出
     PluginManager::buildCommandMap();   // 构建命令映射表
 
     bool no_profile = false;
@@ -106,16 +103,58 @@ int main(int argc, char **argv) {
 
     const char* profile_override = std::getenv("DUCKSHELL_PROFILE");
     const std::string default_profile = join_path(join_path(home_dir, "duckshell"), "profile.dsh");
-    const std::string profile = profile_override && *profile_override ? profile_override : default_profile;
+    const std::string profile = std::filesystem::absolute(profile_override && *profile_override ? profile_override : default_profile).string();
+    // 类似 PowerShell 的 $PROFILE，例如 notepad.exe "${PROFILE}"
+    shell_global_vars["PROFILE"] = profile;
     if (!no_profile && (!profile_override || !*profile_override) && !std::filesystem::exists(profile)) {
+#ifdef _WIN32
+        // Write profile template as UTF-8 without BOM using Windows API
+        std::string template_text = "# DuckShell startup profile\r\n"
+                                    "# Uncomment and customize your prompt, for example:\r\n"
+                                    "# set PROMPT = \"\\e[36mDUCKSHELL { \\w } > \\e[0m\"\r\n"
+                                    "# Customize the startup version color:\r\n"
+                                    "# set DUCKSHELL_VERSION_COLOR = \"";
+        template_text += static_cast<char>(0xC2);
+        template_text += static_cast<char>(0xA7);
+        template_text += "a\"\r\n";
+        HANDLE hFile = CreateFileA(profile.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            DWORD written = 0;
+            WriteFile(hFile, template_text.c_str(), static_cast<DWORD>(template_text.size()), &written, nullptr);
+            CloseHandle(hFile);
+        }
+#else
         std::ofstream profile_template(profile);
         profile_template << "# DuckShell startup profile\n"
                          << "# Uncomment and customize your prompt, for example:\n"
-                         << "# set PROMPT = \"\\e[36mDUCKSHELL { \\w } > \\e[0m\"\n";
+                         << "# set PROMPT = \"\\e[36mDUCKSHELL { \\w } > \\e[0m\"\n"
+                         << "# Customize the startup version color:\n"
+                         << "# set DUCKSHELL_VERSION_COLOR = \"§a\"\n";
+#endif
     }
     if (!no_profile && std::filesystem::exists(profile)) run_script_file(profile);
 
-    if (!arguments.empty() && std::filesystem::is_regular_file(arguments.front())) {
+    // 打印版本号，支持 DUCKSHELL_VERSION_COLOR 变量自定义颜色
+    print_version();
+
+    bool first_argument_is_script = false;
+    if (!arguments.empty()) {
+        try {
+            std::error_code error;
+            first_argument_is_script = std::filesystem::is_regular_file(std::filesystem::path(arguments.front()), error);
+        } catch (const std::exception&) {
+            // Retry UTF-8 input after native path conversion fails.
+        }
+        if (!first_argument_is_script) {
+            try {
+                std::error_code error;
+                first_argument_is_script = std::filesystem::is_regular_file(std::filesystem::u8path(arguments.front()), error);
+            } catch (const std::exception&) {
+                // A shell command may contain non-path Unicode; pass it to the command interpreter.
+            }
+        }
+    }
+    if (first_argument_is_script) {
         std::vector<std::string> script_arguments(arguments.begin() + 1, arguments.end());
         return run_script_file(arguments.front(), script_arguments);
     }

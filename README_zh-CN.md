@@ -57,8 +57,12 @@ cmake --build build
 
 ### Profile 与脚本
 - 启动时读取 `~/duckshell/profile.dsh`；设置 `DUCKSHELL_PROFILE` 可指定其他文件，传入 `--norc` 可跳过加载。
+- 与 PowerShell 类似，变量 `PROFILE` 保存 profile 路径，例如 `notepad.exe ${PROFILE}`；变量展开会保留为一个参数，路径含空格也不需要加引号。
+- 内置命令 `reload` 可重置所有变量、函数和别名并重新加载 profile；`reload --profile-only` 只重新加载 profile，保留核心变量（PROFILE、HOME、PATH、PROMPT 等）。
 - 使用 `DuckShell file.dsh [arguments...]` 运行脚本。当前支持基础 POSIX 风格条件、循环和函数，以及 VBScript 风格的 `If`、`For`、`Do`、`Function`、`Sub` 代码块。
-- `echo` 默认解析常见转义（包括 `\n`、`\r`、`\t`、`\e` 和八进制 ANSI 转义）；`-n` 不输出结尾换行，`-E` 禁止解析。
+- Minecraft 颜色码可直接写在 profile 和命令中：`§a`、`&c`、`{gold}`、`{bold}`、`{#ff8800}`、`&#ff8800`，也支持 `§x§f§f§8§8§0§0`；`§` 颜色码不需要写成 `\u` 转义。颜色转换默认启用，设置 `DUCKSHELL_COLOR_CODES=0` 可全局关闭；`DUCKSHELL_EXTERNAL_COLOR_CODES=0` 只关闭传给外部程序的参数转换。
+- 在 profile 中设置 `DUCKSHELL_VERSION_COLOR` 可自定义启动时版本信息的颜色，例如 `set DUCKSHELL_VERSION_COLOR = "§a"` 会让版本号显示为绿色。
+- `echo` 默认解析常见转义（包括 `\n`、`\r`、`\t`、`\e`、`\xHH`、`\uHHHH`、`\UHHHHHHHH` 和八进制转义）；`-n` 不输出结尾换行，`-E` 只关闭反斜杠转义，不影响颜色码转换。
 
 ### 后续可实现
 管道与重定向、命令替换、通配符展开、作业控制、`case`/`select`、数组，以及更完整的 POSIX/VBScript 表达式和错误语义，都是自然的后续扩展方向。

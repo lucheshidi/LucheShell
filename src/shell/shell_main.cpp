@@ -13,6 +13,7 @@
 #include "shell_commands.h"
 #include "shell_script.h"
 #include "shell_input.h"
+#include "color_codes.h"
 #include "../plugins/plugin_manager.h"
 #include "../plugins/plugins_interface.h"
 #include <deque>
@@ -99,7 +100,7 @@ std::string expand_prompt(std::string prompt) {
             }
         } else result.push_back(prompt[i]);
     }
-    return result;
+    return translate_color_codes(result);
 }
 
 std::string get_prompt() {
@@ -115,9 +116,9 @@ std::string get_prompt() {
     if (!selected.empty()) return expand_prompt(selected);
     for (auto plugin : loaded_plugin_instances) {
         const std::string plugin_prompt = plugin->get_prompt();
-        if (!plugin_prompt.empty()) return plugin_prompt;
+        if (!plugin_prompt.empty()) return translate_color_codes(plugin_prompt);
     }
-    return std::string("DUCKSHELL { ") + dir_now + " }> ";
+    return translate_color_codes(std::string("DUCKSHELL { ") + dir_now + " }> ");
 }
 }
 
