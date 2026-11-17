@@ -30,9 +30,14 @@ if(ENABLE_REMOTE_REPO)
         set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
         set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
 
-        if(WIN32)
+        if(WIN32 AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            # Windows MSVC/MinGW: 使用 SChannel
             set(CMAKE_USE_SCHANNEL ON CACHE BOOL "" FORCE)
             set(CMAKE_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+        elseif(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            # Windows MSYS2 CLANG64: 使用 OpenSSL
+            set(CMAKE_USE_SCHANNEL OFF CACHE BOOL "" FORCE)
+            set(CMAKE_USE_OPENSSL ON CACHE BOOL "" FORCE)
         else()
             # Linux 下确保开启 OpenSSL 支持
             set(CMAKE_USE_OPENSSL ON CACHE BOOL "" FORCE)
@@ -50,7 +55,6 @@ if(ENABLE_REMOTE_REPO)
         # 使用现代CMake方法处理FetchContent
         set(CURL_STATICLIB ON CACHE BOOL "" FORCE)
         set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-        set(CMAKE_USE_OPENSSL ON CACHE BOOL "" FORCE)
 
         # 使用FetchContent_MakeAvailable来处理依赖
         FetchContent_MakeAvailable(curl)
@@ -100,6 +104,9 @@ target_include_directories(DuckShell PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generat
 
 if(MINGW)
     set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++")
+    add_definitions(-D_WIN32_WINNT=0x0601)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND WIN32)
+    # MSYS2 CLANG64 环境：使用 clang 编译器
     add_definitions(-D_WIN32_WINNT=0x0601)
 elseif(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
