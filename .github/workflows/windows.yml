@@ -62,7 +62,6 @@ jobs:
             mingw-w64-clang-aarch64-cmake
             mingw-w64-clang-aarch64-ninja
             mingw-w64-clang-aarch64-openssl
-            mingw-w64-clang-aarch64-libcurl
           pacboy: >-
             clang:p
             cmake:p
