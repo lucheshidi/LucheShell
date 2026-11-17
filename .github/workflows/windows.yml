@@ -19,14 +19,14 @@ jobs:
         include:
           - architecture: amd64
             msystem: MINGW64
-            # 使用 Ninja 生成器在 MinGW 环境下更稳定
+            # 使用 MinGW 环境进行 AMD64 构建
             extra_cmake_args: "-G Ninja"
             shell: msys2 {0}
           - architecture: aarch64
-            msystem: MSVC
-            # MSVC 必须指定架构为 ARM64
-            extra_cmake_args: "-G \"Visual Studio 17 2022\" -A ARM64"
-            shell: powershell
+            msystem: CLANGARM64
+            # 使用 CLANGARM64 环境和 clang 编译器进行 ARM64 构建
+            extra_cmake_args: "-G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++"
+            shell: msys2 {0}
 
     defaults:
       run:
@@ -37,26 +37,38 @@ jobs:
         with:
           lfs: true
 
-      # --- AMD64 (MinGW) 环境配置 ---
-      - name: Install Toolchain for MinGW
+      # --- AMD64 (MINGW64) 环境配置 ---
+      - name: Install Toolchain for AMD64
         if: matrix.architecture == 'amd64'
         uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msystem }}
           update: true
-          # 在 MSYS2 内部运行 cmake 必须安装 msys2 版本的 cmake
           install: >-
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
           cache: true
 
-      # --- ARM64 (MSVC) 环境配置 ---
-      - name: Setup MSVC for ARM64
+      # --- ARM64 (CLANGARM64) 环境配置 ---
+      - name: Install Toolchain for ARM64
         if: matrix.architecture == 'aarch64'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: msys2/setup-msys2@v2
         with:
-          arch: amd64_arm64
+          msystem: ${{ matrix.msystem }}
+          update: true
+          install: >-
+            mingw-w64-clang-aarch64-clang
+            mingw-w64-clang-aarch64-cmake
+            mingw-w64-clang-aarch64-ninja
+            mingw-w64-clang-aarch64-openssl
+            mingw-w64-clang-aarch64-libcurl
+          pacboy: >-
+            clang:p
+            cmake:p
+            ninja:p
+            openssl:p
+          cache: true
 
       # --- 通用构建流程 ---
       - name: Configure CMake
@@ -82,4 +94,4 @@ jobs:
       - name: Clean build directory
         if: always()
         run: |
-          ${{ matrix.architecture == 'aarch64' && 'if (Test-Path build) { Remove-Item -Recurse -Force build }' || 'rm -rf build' }}
+          rm -rf build
