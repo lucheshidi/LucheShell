@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(DuckShell VERSION 0.1.0)
+project(DuckShell VERSION 26.1.0)
 
 # 生成版本头文件
 configure_file(
@@ -16,41 +16,47 @@ option(ENABLE_REMOTE_REPO "Enable remote plugin repository features" ON)
 # ================= Dependencies (libcurl Only) =================
 
 if(ENABLE_REMOTE_REPO)
-    # 1. 强制统一配置 curl 编译选项 (无论是 Win 还是 WSL)
-    set(HTTP_ONLY ON CACHE BOOL "" FORCE)
-    set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
-    set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
-    set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
-    set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
-
-    if(WIN32)
-        set(CMAKE_USE_SCHANNEL ON CACHE BOOL "" FORCE)
-        set(CMAKE_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+    if(APPLE)
+        # macOS: 使用系统 curl，避免内置编译时的 OpenSSL 兼容性问题
+        find_package(CURL REQUIRED)
+        add_definitions(-DHAVE_LIBCURL)
     else()
-        # Linux 下确保开启 OpenSSL 支持
+        # 1. 强制统一配置 curl 编译选项 (无论是 Win 还是 Linux)
+        set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+        set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+        set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
+        set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+        set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
+        set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
+
+        if(WIN32)
+            set(CMAKE_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+            set(CMAKE_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+        else()
+            # Linux 下确保开启 OpenSSL 支持
+            set(CMAKE_USE_OPENSSL ON CACHE BOOL "" FORCE)
+        endif()
+
+        # 2. 直接使用 FetchContent，删掉下面的 find_package(CURL)
+        FetchContent_Declare(
+                curl
+                URL      https://github.com/curl/curl/releases/download/curl-8_5_0/curl-8.5.0.tar.gz
+                DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+                # 为curl设置特定的构建选项
+                OVERRIDE_FIND_PACKAGE
+        )
+
+        # 使用现代CMake方法处理FetchContent
+        set(CURL_STATICLIB ON CACHE BOOL "" FORCE)
+        set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
         set(CMAKE_USE_OPENSSL ON CACHE BOOL "" FORCE)
+
+        # 使用FetchContent_MakeAvailable来处理依赖
+        FetchContent_MakeAvailable(curl)
+
+        add_definitions(-DHAVE_LIBCURL)
     endif()
-
-    # 2. 直接使用 FetchContent，删掉下面的 find_package(CURL)
-    FetchContent_Declare(
-            curl
-            URL      https://github.com/curl/curl/releases/download/curl-8_5_0/curl-8.5.0.tar.gz
-            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-            # 为curl设置特定的构建选项
-            OVERRIDE_FIND_PACKAGE
-    )
-    
-    # 使用现代CMake方法处理FetchContent
-    set(CURL_STATICLIB ON CACHE BOOL "" FORCE)
-    set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-    set(CMAKE_USE_OPENSSL ON CACHE BOOL "" FORCE)
-    
-    # 使用FetchContent_MakeAvailable来处理依赖
-    FetchContent_MakeAvailable(curl)
-
-    add_definitions(-DHAVE_LIBCURL)
 endif()
 
 # ================= Target =================
@@ -106,11 +112,16 @@ if(WIN32)
 endif()
 
 if(ENABLE_REMOTE_REPO)
-    # 关键：链接 FetchContent 出来的 'libcurl' 目标
-    target_link_libraries(DuckShell PRIVATE libcurl)
+    if(APPLE)
+        # macOS: 链接系统 curl
+        target_link_libraries(DuckShell PRIVATE CURL::libcurl)
+    else()
+        # Linux/Windows: 链接 FetchContent 出来的 'libcurl' 目标
+        target_link_libraries(DuckShell PRIVATE libcurl)
 
-    if(UNIX)
-        # Linux 还需要这几个基础库
-        target_link_libraries(DuckShell PRIVATE dl pthread)
+        if(UNIX)
+            # Linux 还需要这几个基础库
+            target_link_libraries(DuckShell PRIVATE dl pthread)
+        endif()
     endif()
 endif()

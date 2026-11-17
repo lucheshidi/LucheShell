@@ -67,13 +67,15 @@ jobs:
         timeout-minutes: 60  # 增加超时时间
 
       # macOS安装改进
-      - name: Install G++ on macOS
+      - name: Install dependencies on macOS
         if: runner.os == 'macOS'
         run: |
-          brew install gcc
-          ls /opt/homebrew/bin/g++* || ls /usr/local/bin/g++* 
+          brew install gcc curl
+          ls /opt/homebrew/bin/g++* || ls /usr/local/bin/g++*
           g++-13 --version || echo "Trying to find available g++ version..."
           g++ --version
+          # 验证 curl 开发库可用
+          brew list curl
         timeout-minutes: 15
 
       - name: Install dependencies for Linux ARM64
@@ -99,7 +101,8 @@ jobs:
         run: |
           cmake -B ${{github.workspace}}/build \
                 -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
-                -DCMAKE_CXX_COMPILER=g++-13
+                -DCMAKE_CXX_COMPILER=g++-13 \
+                -DCMAKE_PREFIX_PATH="/usr/local/opt/curl;/opt/homebrew/opt/curl"
 
       - name: Configure CMake on macOS ARM64
         if: runner.os == 'macOS' && matrix.architecture == 'arm64'
@@ -107,7 +110,8 @@ jobs:
           cmake -B ${{github.workspace}}/build \
                 -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
                 -DCMAKE_CXX_COMPILER=g++-13 \
-                -DCMAKE_OSX_ARCHITECTURES=arm64
+                -DCMAKE_OSX_ARCHITECTURES=arm64 \
+                -DCMAKE_PREFIX_PATH="/usr/local/opt/curl;/opt/homebrew/opt/curl"
 
       - name: Configure CMake on Windows
         if: runner.os == 'Windows'
