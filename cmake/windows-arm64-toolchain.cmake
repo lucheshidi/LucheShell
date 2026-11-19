@@ -1,19 +1,14 @@
 # CMake 工具链文件：从 x86_64 交叉编译到 Windows ARM64
-# 使用 MSYS2 CLANG64 环境的 clang 编译器
+# 使用 LLVM-MinGW 工具链 (mstorsjo/llvm-mingw)
 
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 
-# 设置交叉编译标志
-set(CMAKE_C_COMPILER clang)
-set(CMAKE_CXX_COMPILER clang++)
+# 设置 LLVM-MinGW 交叉编译器
+set(CMAKE_C_COMPILER aarch64-w64-mingw32-clang)
+set(CMAKE_CXX_COMPILER aarch64-w64-mingw32-clang++)
 
-# 设置目标架构
-set(CMAKE_C_FLAGS "--target=arm64-pc-windows-msvc" CACHE STRING "" FORCE)
-set(CMAKE_CXX_FLAGS "--target=arm64-pc-windows-msvc" CACHE STRING "" FORCE)
-set(CMAKE_LINKER_FLAGS "--target=arm64-pc-windows-msvc" CACHE STRING "" FORCE)
-
-# 禁用主机程序测试
+# 禁用主机程序测试（交叉编译时无法运行测试程序）
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
 # 查找路径设置
