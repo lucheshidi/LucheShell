@@ -64,4 +64,4 @@ jobs:
       - name: Clean build directory
         if: always()
         run: |
-          if exist build rmdir /s /q build
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
