@@ -23,8 +23,8 @@ jobs:
             extra_cmake_args: "-G Ninja"
             shell: msys2 {0}
           - architecture: aarch64
-            # 使用 LLVM-MinGW 交叉编译 ARM64，避免 MSYS2 头文件不兼容问题
-            extra_cmake_args: "-G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/windows-arm64-toolchain.cmake"
+            # 使用 MSVC Visual Studio 原生 ARM64 编译
+            extra_cmake_args: "-G \"Visual Studio 17 2022\" -A ARM64"
             shell: cmd
 
     defaults:
@@ -49,34 +49,25 @@ jobs:
             mingw-w64-x86_64-ninja
           cache: true
 
-      # --- ARM64 (LLVM-MinGW 交叉编译) 环境配置 ---
-      - name: Install LLVM-MinGW for ARM64
+      # --- ARM64 (MSVC) 环境配置 ---
+      - name: Setup MSVC for ARM64
         if: matrix.architecture == 'aarch64'
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-x86_64.zip" -OutFile "llvm-mingw.zip"
-          Expand-Archive -Path "llvm-mingw.zip" -DestinationPath "."
-          Rename-Item -Path "llvm-mingw-20261104-ucrt-x86_64" -NewName "llvm-mingw"
-          echo "LLVM_MINGW_PATH=$PWD\llvm-mingw" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          & llvm-mingw\bin\aarch64-w64-mingw32-clang.exe --version
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
 
-      - name: Install CMake and Ninja for ARM64
+      - name: Install CMake for ARM64
         if: matrix.architecture == 'aarch64'
         uses: jwlawson/actions-setup-cmake@v2
         with:
           cmake-version: 'latest'
-          ninja: true
 
       # --- 通用构建流程 ---
       - name: Configure CMake
-        run: |
-          ${{ matrix.architecture == 'aarch64' && 'set PATH=%LLVM_MINGW_PATH%\bin;%PATH%' || '' }}
-          cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} ${{ matrix.extra_cmake_args }}
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} ${{ matrix.extra_cmake_args }}
 
       - name: Build
-        run: |
-          ${{ matrix.architecture == 'aarch64' && 'set PATH=%LLVM_MINGW_PATH%\bin;%PATH%' || '' }}
-          cmake --build build --config ${{env.BUILD_TYPE}}
+        run: cmake --build build --config ${{env.BUILD_TYPE}}
 
       # --- 产物上传 ---
       - name: Upload Build Artifacts
@@ -93,4 +84,4 @@ jobs:
       - name: Clean build directory
         if: always()
         run: |
-          ${{ matrix.architecture == 'aarch64' && 'if exist build rmdir /s /q build' || 'rm -rf build' }}
+          if exist build rmdir /s /q build

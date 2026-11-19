@@ -28,11 +28,14 @@ if(ENABLE_REMOTE_REPO)
         set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
         set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
         set(CURL_USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+        set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+        set(CURL_DISABLE_IDN ON CACHE BOOL "" FORCE)
+        set(CMAKE_USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
         set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
         set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
 
         if(WIN32 AND CMAKE_CROSSCOMPILING)
-            # Windows 交叉编译 (LLVM-MinGW): 使用 SChannel (无需外部 SSL 库)
+            # Windows 交叉编译: 使用 SChannel (无需外部 SSL 库)
             set(CMAKE_USE_SCHANNEL ON CACHE BOOL "" FORCE)
             set(CMAKE_USE_OPENSSL OFF CACHE BOOL "" FORCE)
         elseif(WIN32 AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -109,9 +112,6 @@ target_include_directories(DuckShell PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generat
 
 if(MINGW)
     set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++")
-    add_definitions(-D_WIN32_WINNT=0x0601)
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND WIN32 AND CMAKE_CROSSCOMPILING)
-    # LLVM-MinGW 交叉编译到 Windows ARM64
     add_definitions(-D_WIN32_WINNT=0x0601)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND WIN32)
     # MSYS2 CLANG64 环境：使用 clang 编译器
