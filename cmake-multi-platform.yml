@@ -52,25 +52,17 @@ jobs:
           sudo apt-get install -y g++-aarch64-linux-gnu
           echo "G++ ARM64 installation completed with exit code $?"
 
-      - name: Install Clang on Windows AMD64
+      - name: Install Toolchain on Windows
         if: runner.os == 'Windows' && matrix.architecture == 'amd64'
         uses: msys2/setup-msys2@v2
         with:
-          msystem: CLANG64
-          update: false
+          msystem: MINGW64
+          update: true
           install: >-
-            mingw-w64-clang-x86_64-clang
-            mingw-w64-clang-x86_64-cmake
-            mingw-w64-clang-x86_64-ninja
-            mingw-w64-clang-x86_64-openssl
-            mingw-w64-clang-x86_64-libcurl
-          pacboy: >-
-            clang:p
-            cmake:p
-            ninja:p
-            openssl:p
-          cache: false
-        timeout-minutes: 60  # 增加超时时间
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+          cache: true
 
       # macOS安装改进
       - name: Install dependencies on macOS
@@ -125,9 +117,7 @@ jobs:
         run: |
           cmake -B ${{github.workspace}}/build \
                 -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
-                -G "Ninja" \
-                -DCMAKE_C_COMPILER=clang \
-                -DCMAKE_CXX_COMPILER=clang++
+                -G "Ninja"
       - name: Configure CMake on other platforms
         if: runner.os != 'Windows' && runner.os != 'macOS' && !(runner.os == 'Linux' && matrix.architecture == 'arm64')
         run: |

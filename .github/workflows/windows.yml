@@ -19,13 +19,8 @@ jobs:
         include:
           - architecture: amd64
             msystem: MINGW64
-            # 使用 MinGW 环境进行 AMD64 构建
             extra_cmake_args: "-G Ninja"
             shell: msys2 {0}
-          - architecture: aarch64
-            # 使用 MSVC Visual Studio 原生 ARM64 编译
-            extra_cmake_args: "-G \"Visual Studio 17 2022\" -A ARM64"
-            shell: cmd
 
     defaults:
       run:
@@ -36,9 +31,7 @@ jobs:
         with:
           lfs: true
 
-      # --- AMD64 (MINGW64) 环境配置 ---
-      - name: Install Toolchain for AMD64
-        if: matrix.architecture == 'amd64'
+      - name: Install Toolchain
         uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msystem }}
@@ -48,19 +41,6 @@ jobs:
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
           cache: true
-
-      # --- ARM64 (MSVC) 环境配置 ---
-      - name: Setup MSVC for ARM64
-        if: matrix.architecture == 'aarch64'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: amd64_arm64
-
-      - name: Install CMake for ARM64
-        if: matrix.architecture == 'aarch64'
-        uses: jwlawson/actions-setup-cmake@v2
-        with:
-          cmake-version: 'latest'
 
       # --- 通用构建流程 ---
       - name: Configure CMake
